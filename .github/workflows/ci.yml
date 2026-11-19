@@ -39,7 +39,7 @@ jobs:
         run: |
           mkdir -p dist
           cp index.html dist/
-          emcc main.cpp -std=c++20 -O3 -o dist/engine.js \
+          em++ main.cpp -std=c++20 -O3 -o dist/engine.js \
             -sMODULARIZE=1 -sEXPORT_NAME=createEngine -sALLOW_MEMORY_GROWTH=1 \
             -sEXPORTED_FUNCTIONS=_ob_reset,_ob_limit,_ob_market,_ob_cancel,_ob_last_status,_ob_last_filled,_ob_is_open,_ob_bots,_ob_state_json,_ob_bench \
             -sEXPORTED_RUNTIME_METHODS=cwrap
