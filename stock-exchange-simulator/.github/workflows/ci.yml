@@ -1,0 +1,59 @@
+name: Build, test, and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests with sanitizers
+        run: |
+          g++ -std=c++20 -g -Wall -Wextra -fsanitize=address,undefined -pthread main.cpp -o exchange-asan
+          ./exchange-asan test
+      - name: Release build and benchmark
+        run: |
+          g++ -std=c++20 -O3 -Wall -Wextra -pthread main.cpp -o exchange
+          ./exchange bench 1000000
+
+  web:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+      - name: Compile engine to WebAssembly
+        run: |
+          mkdir -p dist
+          cp index.html dist/
+          emcc main.cpp -std=c++20 -O3 -o dist/engine.js \
+            -sMODULARIZE=1 -sEXPORT_NAME=createEngine -sALLOW_MEMORY_GROWTH=1 \
+            -sEXPORTED_FUNCTIONS=_ob_reset,_ob_limit,_ob_market,_ob_cancel,_ob_last_status,_ob_last_filled,_ob_is_open,_ob_bots,_ob_state_json,_ob_bench \
+            -sEXPORTED_RUNTIME_METHODS=cwrap
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: web
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

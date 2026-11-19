@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stock Exchange Simulator</title>
+  <meta name="description" content="A C++ stock exchange matching engine running in the browser through WebAssembly.">
+  <style>
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --line: #2a313c;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --bid: #2ea043;
+  --bid-soft: rgba(46, 160, 67, 0.16);
+  --ask: #f85149;
+  --ask-soft: rgba(248, 81, 73, 0.16);
+  --accent: #58a6ff;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 24px 24px 12px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+h1 { margin: 0; font-size: 24px; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+.repo { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.repo:hover { text-decoration: underline; }
+
+main, .loading { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+.loading { color: var(--muted); padding-top: 40px; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.stats > div { background: var(--panel); padding: 10px 12px; }
+.label { display: block; color: var(--muted); font-size: 12px; }
+.value { font: 600 16px var(--mono); }
+
+.grid { display: grid; grid-template-columns: 1fr 1.1fr 0.9fr; gap: 16px; margin-bottom: 16px; }
+.grid.two { grid-template-columns: 1fr 1fr; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 0;
+}
+h2 { margin: 0 0 12px; font-size: 15px; }
+h3 { margin: 20px 0 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+
+form { display: grid; gap: 10px; }
+label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+label.inline { display: flex; align-items: center; gap: 8px; }
+input, select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  font: 14px var(--mono);
+}
+input[type="range"] { padding: 0; }
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: #21262d;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font: inherit;
+}
+button:hover { border-color: var(--muted); }
+button.primary { border: none; font-weight: 600; background: var(--accent); color: #0d1117; }
+button.primary.buy { background: var(--bid); color: #fff; }
+button.primary.sell { background: var(--ask); color: #fff; }
+button.link { background: none; border: none; color: var(--muted); padding: 12px 0 0; text-decoration: underline; }
+
+.toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.toggle .side.active.buy { background: var(--bid-soft); border-color: var(--bid); color: var(--bid); }
+.toggle .side.active.sell { background: var(--ask-soft); border-color: var(--ask); color: var(--ask); }
+
+.msg { min-height: 21px; margin: 10px 0 0; font: 13px var(--mono); color: var(--muted); }
+.msg.ok { color: var(--bid); }
+.msg.err { color: var(--ask); }
+
+.my-orders { list-style: none; margin: 0; padding: 0; font: 13px var(--mono); }
+.my-orders li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.my-orders li.empty { color: var(--muted); font-family: inherit; border: none; }
+.my-orders button { padding: 2px 8px; font-size: 12px; }
+
+.bots { display: grid; gap: 8px; }
+
+.ladder-head, .tape-head, .row, .trade {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.6fr;
+  font: 13px var(--mono);
+  padding: 2px 8px;
+}
+.ladder-head, .tape-head { color: var(--muted); font-size: 12px; font-family: inherit; }
+.ladder-head span:not(:first-child), .row span:not(:first-child),
+.tape-head span:not(:first-child), .trade span:not(:first-child) { text-align: right; }
+
+.ladder { display: flex; flex-direction: column; min-height: 252px; }
+#asks { justify-content: flex-end; }
+.row { position: relative; cursor: pointer; }
+.row:hover { background: #21262d; }
+.row span { position: relative; z-index: 1; }
+.row .bar { position: absolute; top: 1px; bottom: 1px; right: 0; z-index: 0; }
+.row.ask .price { color: var(--ask); }
+.row.ask .bar { background: var(--ask-soft); }
+.row.bid .price { color: var(--bid); }
+.row.bid .bar { background: var(--bid-soft); }
+.row.mine .price::after { content: " *"; color: var(--accent); }
+
+.spread-row {
+  text-align: center;
+  font: 600 13px var(--mono);
+  padding: 6px;
+  margin: 4px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.tape { height: 520px; overflow: hidden; }
+.trade.B .price { color: var(--bid); }
+.trade.S .price { color: var(--ask); }
+.trade.mine { background: rgba(88, 166, 255, 0.12); }
+.trade.flash { animation: flash 0.6s ease-out; }
+@keyframes flash { from { background: #30363d; } }
+
+.hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+
+.bench-controls { display: flex; gap: 8px; }
+.bench-out { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.bench-out > div { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+
+.how { margin: 0; padding-left: 18px; color: var(--muted); }
+.how li { margin-bottom: 6px; }
+.how b { color: var(--text); font-weight: 600; }
+
+footer { text-align: center; color: var(--muted); font-size: 12px; padding: 16px 24px 32px; }
+
+@media (max-width: 960px) {
+  .grid, .grid.two { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(4, 1fr); }
+  .tape { height: 300px; }
+  .bench-out { grid-template-columns: 1fr 1fr; }
+  header { flex-direction: column; align-items: flex-start; }
+}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Stock Exchange Simulator</h1>
+      <p class="sub">A C++ order matching engine compiled to WebAssembly. Every order below is matched by the same code that runs natively.</p>
+    </div>
+    <a class="repo" id="repo-link" href="https://github.com/" target="_blank" rel="noopener">View source on GitHub</a>
+  </header>
+
+  <div id="loading" class="loading">Loading engine...</div>
+
+  <main id="app" hidden>
+    <section class="stats">
+      <div><span class="label">Last price</span><span id="s-last" class="value">-</span></div>
+      <div><span class="label">Best bid</span><span id="s-bid" class="value bid">-</span></div>
+      <div><span class="label">Best ask</span><span id="s-ask" class="value ask">-</span></div>
+      <div><span class="label">Spread</span><span id="s-spread" class="value">-</span></div>
+      <div><span class="label">Resting orders</span><span id="s-orders" class="value">0</span></div>
+      <div><span class="label">Trades</span><span id="s-trades" class="value">0</span></div>
+      <div><span class="label">Volume</span><span id="s-volume" class="value">0</span></div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Place an order</h2>
+        <form id="order-form" autocomplete="off">
+          <div class="toggle" role="group" aria-label="Side">
+            <button type="button" class="side active buy" data-side="0">Buy</button>
+            <button type="button" class="side sell" data-side="1">Sell</button>
+          </div>
+          <label>Type
+            <select id="o-type">
+              <option value="limit">Limit (rests on the book)</option>
+              <option value="market">Market (fills now at best price)</option>
+            </select>
+          </label>
+          <label id="price-row">Price ($)
+            <input id="o-price" type="number" step="0.01" min="0.01" value="100.00" required>
+          </label>
+          <label>Quantity
+            <input id="o-qty" type="number" step="1" min="1" value="50" required>
+          </label>
+          <button id="submit" type="submit" class="primary buy">Buy</button>
+        </form>
+        <p id="msg" class="msg"></p>
+
+        <h3>Your open orders</h3>
+        <ul id="my-orders" class="my-orders"><li class="empty">None</li></ul>
+
+        <h3>Simulated traders</h3>
+        <div class="bots">
+          <button id="bots-toggle" type="button">Pause traders</button>
+          <label class="inline">Speed
+            <input id="bots-speed" type="range" min="1" max="200" value="20">
+            <span id="bots-rate">200</span> orders/sec
+          </label>
+        </div>
+        <button id="reset" type="button" class="link">Reset book</button>
+      </section>
+
+      <section class="card">
+        <h2>Order book</h2>
+        <div class="ladder-head"><span>Price</span><span>Quantity</span><span>Orders</span></div>
+        <div id="asks" class="ladder"></div>
+        <div id="spread-row" class="spread-row">-</div>
+        <div id="bids" class="ladder"></div>
+        <p class="hint">Click a price to fill it into the order form.</p>
+      </section>
+
+      <section class="card">
+        <h2>Trades</h2>
+        <div class="tape-head"><span>Price</span><span>Qty</span><span>Side</span></div>
+        <div id="tape" class="tape"></div>
+      </section>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>Speed test</h2>
+        <p>Runs random orders (55% limit, 10% market, 35% cancel) through a fresh book inside your browser and times each one.</p>
+        <div class="bench-controls">
+          <select id="bench-n">
+            <option value="100000">100,000 orders</option>
+            <option value="1000000" selected>1,000,000 orders</option>
+          </select>
+          <button id="bench" type="button" class="primary">Run</button>
+        </div>
+        <div id="bench-out" class="bench-out"></div>
+        <p class="hint">Browser timers are coarse, so latency here is rounded. Native benchmarks are in the README.</p>
+      </section>
+
+      <section class="card">
+        <h2>How it works</h2>
+        <ul class="how">
+          <li><b>Price-time priority.</b> The best price fills first. At the same price, the oldest order fills first.</li>
+          <li><b>Order book.</b> Bids and asks are sorted price levels. Each level holds a linked list of orders, so a cancel is O(1) once the order is found.</li>
+          <li><b>No allocation while matching.</b> Orders come from a preallocated memory pool.</li>
+          <li><b>Lock-free queue.</b> The native build can split order intake and matching across two threads with a lock-free single-producer, single-consumer queue.</li>
+          <li><b>Prices in cents.</b> Integer ticks avoid floating point rounding errors.</li>
+        </ul>
+      </section>
+    </div>
+  </main>
+
+  <footer>Built in C++20, compiled with Emscripten, hosted on GitHub Pages.</footer>
+
+  <script src="engine.js"></script>
+  <script>
+"use strict";
+
+const LEVELS = 12;
+const TAPE_ROWS = 40;
+const BOT_ID_BASE = 1e9;
+const STATUS = ["ACCEPTED", "PARTIAL", "FILLED", "CANCELLED", "DUPLICATE ID", "INVALID", "UNKNOWN ID"];
+
+const $ = (id) => document.getElementById(id);
+const fmt = (ticks) => (ticks / 100).toFixed(2);
+const num = (n) => n.toLocaleString("en-US");
+
+// Point the source link at the repo when hosted at <user>.github.io/<repo>/.
+(function setRepoLink() {
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  const repo = location.pathname.split("/").filter(Boolean)[0];
+  if (m && repo) $("repo-link").href = `https://github.com/${m[1]}/${repo}`;
+})();
+
+createEngine().then((Module) => {
+  const api = {
+    reset: Module.cwrap("ob_reset", null, []),
+    limit: Module.cwrap("ob_limit", "number", ["number", "number", "number"]),
+    market: Module.cwrap("ob_market", "number", ["number", "number"]),
+    cancel: Module.cwrap("ob_cancel", "number", ["number"]),
+    lastStatus: Module.cwrap("ob_last_status", "number", []),
+    lastFilled: Module.cwrap("ob_last_filled", "number", []),
+    isOpen: Module.cwrap("ob_is_open", "number", ["number"]),
+    bots: Module.cwrap("ob_bots", null, ["number"]),
+    state: Module.cwrap("ob_state_json", "string", ["number"]),
+    bench: Module.cwrap("ob_bench", "string", ["number"]),
+  };
+  start(api);
+});
+
+function start(api) {
+  let side = 0; // 0 = buy, 1 = sell
+  let botsOn = true;
+  let botRate = 200; // orders per second
+  let botCarry = 0;
+  let lastTick = performance.now();
+  let tape = [];
+  const mine = new Map(); // id -> { side, price, qty }
+
+  $("loading").hidden = true;
+  $("app").hidden = false;
+
+  // Seed the book so it is not empty on first load.
+  api.bots(3000);
+  render(JSON.parse(api.state(LEVELS)), true);
+
+  // ---- Order form ----
+  document.querySelectorAll(".side").forEach((btn) =>
+    btn.addEventListener("click", () => setSide(Number(btn.dataset.side)))
+  );
+
+  function setSide(s) {
+    side = s;
+    document.querySelectorAll(".side").forEach((b) =>
+      b.classList.toggle("active", Number(b.dataset.side) === s)
+    );
+    const submit = $("submit");
+    submit.textContent = s === 0 ? "Buy" : "Sell";
+    submit.classList.toggle("buy", s === 0);
+    submit.classList.toggle("sell", s === 1);
+  }
+
+  $("o-type").addEventListener("change", () => {
+    $("price-row").hidden = $("o-type").value === "market";
+  });
+
+  $("order-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const qty = Math.floor(Number($("o-qty").value));
+    if (!(qty > 0)) return message("Quantity must be at least 1", true);
+
+    let id;
+    let price = 0;
+    if ($("o-type").value === "limit") {
+      price = Math.round(Number($("o-price").value) * 100);
+      if (!(price > 0)) return message("Price must be above 0", true);
+      id = api.limit(side, price, qty);
+    } else {
+      id = api.market(side, qty);
+    }
+
+    const status = api.lastStatus();
+    const filled = api.lastFilled();
+    if (api.isOpen(id)) mine.set(id, { side, price, qty: qty - filled });
+    const what = `${side === 0 ? "BUY" : "SELL"} #${id}: ${STATUS[status]}`;
+    message(filled > 0 ? `${what}, filled ${num(filled)} of ${num(qty)}` : what, status >= 4);
+    refresh();
+  });
+
+  function message(text, isError) {
+    const el = $("msg");
+    el.textContent = text;
+    el.className = "msg " + (isError ? "err" : "ok");
+  }
+
+  // ---- Simulated traders ----
+  $("bots-toggle").addEventListener("click", () => {
+    botsOn = !botsOn;
+    $("bots-toggle").textContent = botsOn ? "Pause traders" : "Resume traders";
+  });
+  const speed = $("bots-speed");
+  const updateRate = () => {
+    botRate = Number(speed.value) * 10;
+    $("bots-rate").textContent = num(botRate);
+  };
+  speed.addEventListener("input", updateRate);
+  updateRate();
+
+  $("reset").addEventListener("click", () => {
+    api.reset();
+    mine.clear();
+    tape = [];
+    api.bots(3000);
+    message("Book reset", false);
+    render(JSON.parse(api.state(LEVELS)), true);
+  });
+
+  // ---- Speed test ----
+  $("bench").addEventListener("click", () => {
+    const n = Number($("bench-n").value);
+    $("bench").disabled = true;
+    $("bench-out").innerHTML = "<div>Running...</div>";
+    setTimeout(() => {
+      const r = JSON.parse(api.bench(n));
+      const cell = (label, value) => `<div><span class="label">${label}</span><span class="value">${value}</span></div>`;
+      $("bench-out").innerHTML =
+        cell("Throughput", `${r.mops.toFixed(2)}M/s`) +
+        cell("Total time", `${(r.seconds * 1000).toFixed(0)} ms`) +
+        cell("Median", `${r.p50} ns`) +
+        cell("p99", `${r.p99} ns`);
+      $("bench").disabled = false;
+    }, 30);
+  });
+
+  // ---- Main loop ----
+  function loop(now) {
+    const dt = Math.min(0.5, (now - lastTick) / 1000);
+    lastTick = now;
+    if (botsOn) {
+      botCarry += botRate * dt;
+      const n = Math.floor(botCarry);
+      if (n > 0) {
+        botCarry -= n;
+        api.bots(n);
+      }
+    }
+    refresh();
+    requestAnimationFrame(loop);
+  }
+
+  let lastRender = 0;
+  function refresh() {
+    const now = performance.now();
+    if (now - lastRender < 100) return; // about 10 redraws per second
+    lastRender = now;
+    render(JSON.parse(api.state(LEVELS)), false);
+  }
+
+  function render(s, initial) {
+    // Stats
+    const bid = s.bids.length ? s.bids[0][0] : 0;
+    const ask = s.asks.length ? s.asks[0][0] : 0;
+    $("s-last").textContent = s.last ? fmt(s.last) : "-";
+    $("s-bid").textContent = bid ? fmt(bid) : "-";
+    $("s-ask").textContent = ask ? fmt(ask) : "-";
+    $("s-spread").textContent = bid && ask ? fmt(ask - bid) : "-";
+    $("s-orders").textContent = num(s.orders);
+    $("s-trades").textContent = num(s.totalTrades);
+    $("s-volume").textContent = num(s.volume);
+    $("spread-row").textContent = bid && ask ? `Spread ${fmt(ask - bid)}` : "No spread";
+
+    // My orders: drop anything that has filled or been cancelled.
+    for (const id of mine.keys()) if (!api.isOpen(id)) mine.delete(id);
+    const myPrices = new Set([...mine.values()].map((o) => `${o.side}:${o.price}`));
+    renderMyOrders();
+
+    // Ladder
+    const maxQty = Math.max(1, ...s.bids.map((l) => l[1]), ...s.asks.map((l) => l[1]));
+    $("asks").innerHTML = s.asks.slice().reverse().map((l) => row(l, "ask", maxQty, myPrices.has(`1:${l[0]}`))).join("");
+    $("bids").innerHTML = s.bids.map((l) => row(l, "bid", maxQty, myPrices.has(`0:${l[0]}`))).join("");
+
+    // Tape (newest first)
+    if (!initial && s.trades.length) {
+      const fresh = s.trades.slice(-TAPE_ROWS).reverse().map((t) => ({ ...t, fresh: true }));
+      tape = fresh.concat(tape.map((t) => ({ ...t, fresh: false }))).slice(0, TAPE_ROWS);
+    }
+    $("tape").innerHTML = tape.map((t) => {
+      const isMine = t.taker < BOT_ID_BASE || t.maker < BOT_ID_BASE;
+      return `<div class="trade ${t.side}${isMine ? " mine" : ""}${t.fresh ? " flash" : ""}">` +
+        `<span class="price">${fmt(t.price)}</span><span>${num(t.qty)}</span>` +
+        `<span>${t.side === "B" ? "BUY" : "SELL"}</span></div>`;
+    }).join("");
+  }
+
+  function row([price, qty, orders], kind, maxQty, isMine) {
+    const w = ((qty / maxQty) * 100).toFixed(1);
+    return `<div class="row ${kind}${isMine ? " mine" : ""}" data-price="${price}">` +
+      `<div class="bar" style="width:${w}%"></div>` +
+      `<span class="price">${fmt(price)}</span><span>${num(qty)}</span><span>${orders}</span></div>`;
+  }
+
+  function renderMyOrders() {
+    const ul = $("my-orders");
+    if (!mine.size) {
+      ul.innerHTML = '<li class="empty">None</li>';
+      return;
+    }
+    const html = [...mine.entries()].map(([id, o]) =>
+      `<li><span>#${id} ${o.side === 0 ? "BUY" : "SELL"} ${num(o.qty)} @ ${fmt(o.price)}</span>` +
+      `<button type="button" data-cancel="${id}">Cancel</button></li>`
+    ).join("");
+    // Only touch the DOM when the list changes, so Cancel buttons stay clickable.
+    if (ul.innerHTML !== html) ul.innerHTML = html;
+  }
+
+  $("my-orders").addEventListener("click", (e) => {
+    const id = e.target.dataset && e.target.dataset.cancel;
+    if (!id) return;
+    const status = api.cancel(Number(id));
+    mine.delete(Number(id));
+    message(`#${id}: ${STATUS[status]}`, status !== 3);
+    lastRender = 0;
+    refresh();
+  });
+
+  // Click a ladder price to load it into the form.
+  ["asks", "bids"].forEach((elId) =>
+    // pointerdown, not click: the ladder redraws 10x/sec and a click can land on a replaced row.
+    $(elId).addEventListener("pointerdown", (e) => {
+      const r = e.target.closest(".row");
+      if (!r) return;
+      $("o-type").value = "limit";
+      $("price-row").hidden = false;
+      $("o-price").value = fmt(Number(r.dataset.price));
+    })
+  );
+
+  requestAnimationFrame(loop);
+}
+  </script>
+</body>
+</html>
